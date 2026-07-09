@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-ssr/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.env
+.env.local
+.env.*.local
+.vite/
+server/data/
+.claude/settings.local.json

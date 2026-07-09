@@ -1,0 +1,96 @@
+# TODO: update domain before launch (see SITE_URL in src/data/company.js)
+# Transactional routes are excluded — no content value, avoids duplicate
+# shells being indexed. Named AI/answer-engine bots are explicitly welcome.
+
+User-agent: GPTBot
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: ChatGPT-User
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: PerplexityBot
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: Perplexity-User
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: Google-Extended
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: GoogleOther
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: ClaudeBot
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: Claude-User
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: CCBot
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: Bytespider
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: Amazonbot
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+User-agent: *
+Allow: /
+Disallow: /checkout
+Disallow: /payment
+Disallow: /cart
+Disallow: /order/
+
+Sitemap: https://nanorev.my/sitemap.xml
