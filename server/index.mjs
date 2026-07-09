@@ -10,11 +10,11 @@ import express from 'express'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openStore } from './store.mjs'
+import { openStore, DATA_DIR } from './store.mjs'
 import { TEMPLATES, applyTemplate } from './templates.mjs'
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url))
-const UPLOAD_DIR = resolve(SERVER_DIR, 'data', 'uploads')
+const UPLOAD_DIR = resolve(DATA_DIR, 'uploads')
 const DIST_DIR = resolve(SERVER_DIR, '..', 'dist')
 mkdirSync(UPLOAD_DIR, { recursive: true })
 

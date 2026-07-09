@@ -11,7 +11,11 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const DATA_DIR = resolve(root, 'server', 'data')
+// DATA_DIR: mount a persistent volume here in production (e.g. /data on
+// Railway/Render) — holds the database file and uploaded images.
+export const DATA_DIR = process.env.DATA_DIR
+  ? resolve(process.env.DATA_DIR)
+  : resolve(root, 'server', 'data')
 const DB_FILE = resolve(DATA_DIR, 'nanorev.json')
 
 async function loadSeedModules() {

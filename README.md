@@ -32,8 +32,11 @@ npm run dev           # storefront on :5174, proxies /api → :4000
 
 # production (one process serves API + built storefront)
 npm run build         # dist/ + prerendered SEO pages + sitemap (uses live API if up)
-ADMIN_KEY=change-me npm start
+ADMIN_KEY=change-me DATA_DIR=/data npm start
 ```
+
+**Deploying:** see [DEPLOY.md](DEPLOY.md) — Railway/Render/VPS with a persistent
+volume. Vercel only hosts the static frontend (no backend — demo only).
 
 Admin panel: `/admin` — key is `ADMIN_KEY` (env), default `nanorev-admin` (**dev only —
 always set a real key in production**). Pages tab & page builder are desktop-only;
