@@ -35,8 +35,8 @@ truth — enable Point-in-Time Recovery or scheduled backups in the dashboard.
 ## Vercel
 
 The app runs fully on Vercel — the built storefront is served statically and
-`/api/*` runs as a serverless function (`api/[...path].mjs` wraps the Express
-app; `vercel.json` wires the routing). No separate backend host needed.
+`/api/*` runs as a serverless function (`api/index.mjs` wraps the Express app;
+`vercel.json` rewrites all `/api/*` to it). No separate backend host needed.
 
 1. Create the Supabase project and apply [server/schema.sql](server/schema.sql),
    then seed it once from your machine:
