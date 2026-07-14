@@ -137,6 +137,23 @@ export default function Builder() {
     }
   }, [id, key, page, sections])
 
+  // publish / unpublish in one click: flip status and save together
+  const setStatus = useCallback(async (status) => {
+    const next = { ...page, status }
+    setPage(next)
+    setSaveState('saving')
+    try {
+      await api(`/admin/pages/${id}`, {
+        method: 'PUT',
+        key,
+        body: { ...next, sections: sections.map(({ uid: _u, ...s }) => s) },
+      })
+      setSaveState('saved')
+    } catch {
+      setSaveState('error')
+    }
+  }, [id, key, page, sections])
+
   // keyboard: undo/redo/save
   useEffect(() => {
     const onKey = (e) => {
@@ -251,17 +268,34 @@ export default function Builder() {
         </div>
         <div className="bt-right">
           {previewSlug && (
-            <a className="btn btn-ghost" style={{ padding: '8px 14px' }} href={`/l/${previewSlug}`} target="_blank" rel="noreferrer">
-              <ExternalLink size={15} /> Pratonton
+            <a className="btn btn-ghost" style={{ padding: '8px 14px' }} href={`/l/${previewSlug}?preview=1`} target="_blank" rel="noreferrer">
+              <ExternalLink size={15} /> Preview
             </a>
           )}
-          <select value={page.status} onChange={(e) => { setPage({ ...page, status: e.target.value }); setSaveState('unsaved') }}>
-            <option value="published">published</option>
-            <option value="draft">draft</option>
-          </select>
-          <button className="btn btn-primary" style={{ padding: '9px 20px' }} onClick={save} disabled={saveState === 'saving'}>
+          <button className="btn btn-ghost" style={{ padding: '9px 16px' }} onClick={save} disabled={saveState === 'saving'}>
             {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Retry save' : 'Save'}
           </button>
+          {page.status === 'published' ? (
+            <button
+              className="btn btn-ghost"
+              style={{ padding: '9px 16px' }}
+              onClick={() => setStatus('draft')}
+              disabled={saveState === 'saving'}
+              title="Revert to draft — hides the page from the public"
+            >
+              Unpublish
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              style={{ padding: '9px 20px', background: '#16a34a', borderColor: '#16a34a' }}
+              onClick={() => setStatus('published')}
+              disabled={saveState === 'saving'}
+              title="Publish — make this page live to the public"
+            >
+              Publish
+            </button>
+          )}
         </div>
       </div>
 

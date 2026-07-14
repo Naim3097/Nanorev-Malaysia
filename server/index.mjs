@@ -6,23 +6,22 @@
 //
 // Persistence: server/store.mjs (JSON file, seeded from src/data on first boot).
 
+import './env.mjs' // load .env.local / .env before anything reads process.env
 import express from 'express'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openStore, DATA_DIR } from './store.mjs'
+import { openStore } from './store.mjs'
 import { TEMPLATES, applyTemplate } from './templates.mjs'
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url))
-const UPLOAD_DIR = resolve(DATA_DIR, 'uploads')
 const DIST_DIR = resolve(SERVER_DIR, '..', 'dist')
-mkdirSync(UPLOAD_DIR, { recursive: true })
 
 const PORT = process.env.PORT || 4000
 const ADMIN_KEY = process.env.ADMIN_KEY || 'nanorev-admin'
 const ATTRIBUTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000 // 30-day last click
 
-const { data, save, pricing } = await openStore()
+const { data, save, pricing, uploads } = await openStore()
 const app = express()
 app.use(express.json({ limit: '1mb' }))
 
@@ -75,22 +74,25 @@ app.get('/api/nav', (req, res) => {
 })
 
 // ── public: landing pages / affiliate links ──────────────────────
-function resolveSlug(slug) {
-  const link = data.links.find((l) => l.slug === slug && l.active)
+// preview: an authenticated admin can view a page before it's live — draft
+// status, an inactive link, or an inactive product/workshop don't 404.
+function resolveSlug(slug, { preview = false } = {}) {
+  const link = data.links.find((l) => l.slug === slug && (l.active || preview))
   if (!link) return null
   const page = findPage(link.pageId)
-  if (!page || page.status !== 'published') return null
+  if (!page || (page.status !== 'published' && !preview)) return null
   const product = findProduct(page.productId)
-  if (!product || !product.active) return null
+  if (!product || (!product.active && !preview)) return null
   const workshop = link.workshopId ? findWorkshop(link.workshopId) : null
-  if (link.workshopId && (!workshop || !workshop.active)) return null
+  if (link.workshopId && (!workshop || (!workshop.active && !preview))) return null
   const canonicalSlug =
     data.links.find((l) => l.pageId === link.pageId && !l.workshopId && l.active)?.slug || slug
   return { link, page, workshop, product, canonicalSlug }
 }
 
 app.get('/api/landing/:slug', (req, res) => {
-  const resolved = resolveSlug(req.params.slug)
+  const preview = req.query.preview === '1' && req.headers['x-admin-key'] === ADMIN_KEY
+  const resolved = resolveSlug(req.params.slug, { preview })
   if (!resolved) return res.status(404).json({ error: 'Link not found' })
   const { page, workshop, product, canonicalSlug } = resolved
   res.json({ page, workshop, product, canonicalSlug })
@@ -489,10 +491,11 @@ app.delete('/api/admin/links/:slug', (req, res) => {
   res.json({ ok: true })
 })
 
-// product image uploads — stored under server/data/uploads, served below.
-// Base64 payload keeps it dependency-free; 6mb body cap ≈ 4mb image.
-app.use('/api/uploads', express.static(UPLOAD_DIR, { maxAge: '30d', immutable: true }))
-app.post('/api/admin/upload', express.json({ limit: '6mb' }), (req, res) => {
+// product image uploads. The store decides where bytes land: Supabase Storage
+// (public CDN url) or, in file mode, server/data/uploads served just below.
+// Base64 payload keeps the client dependency-free; 6mb body cap ≈ 4mb image.
+if (uploads.dir) app.use('/api/uploads', express.static(uploads.dir, { maxAge: '30d', immutable: true }))
+app.post('/api/admin/upload', express.json({ limit: '6mb' }), async (req, res) => {
   const { name, dataBase64 } = req.body || {}
   if (!name || !dataBase64) return res.status(400).json({ error: 'name and dataBase64 are required' })
   const ext = String(name).toLowerCase().match(/\.(jpe?g|png|webp)$/)?.[1]
@@ -502,9 +505,14 @@ app.post('/api/admin/upload', express.json({ limit: '6mb' }), (req, res) => {
     return res.status(400).json({ error: 'Image must be between 1 byte and 4MB' })
   }
   const base = String(name).toLowerCase().replace(/\.[^.]+$/, '').replace(/[^a-z0-9-]/g, '-').slice(0, 50) || 'image'
-  const file = `${base}-${Date.now().toString(36)}.${ext}`
-  writeFileSync(resolve(UPLOAD_DIR, file), buf)
-  res.status(201).json({ url: `/api/uploads/${file}` })
+  const contentType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+  try {
+    const url = await uploads.save(buf, base, ext, contentType)
+    res.status(201).json({ url })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ error: 'Upload failed' })
+  }
 })
 
 // commissions

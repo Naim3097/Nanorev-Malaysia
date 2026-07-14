@@ -1,47 +1,59 @@
-# Deploying NanoRev (Option A — one Node host)
+# Deploying NanoRev (one Node host + Supabase)
 
 One process serves everything: API + admin + storefront + prerendered SEO pages.
-The host must provide a **persistent disk** — the database is a JSON file and
-product photos are uploaded files. Serverless/ephemeral hosts (Vercel, Netlify)
-will silently lose data; do not use them for this backend.
+Data (Postgres) and product photos (Storage) live in **Supabase**, so the Node
+host no longer needs a persistent disk — any container/VM host works, and even
+ephemeral hosts are fine for the backend.
+
+**Prerequisite:** create the Supabase project and run [server/schema.sql](server/schema.sql)
+once (see README → *Supabase setup*). Then set the env vars below.
 
 Environment variables:
 
 | Var | Required | Example | Purpose |
 |---|---|---|---|
 | `ADMIN_KEY` | **yes** | a long random string | Admin panel / admin API auth. The default `nanorev-admin` is public in this repo — never ship it. |
-| `DATA_DIR` | **yes in prod** | `/data` | Where the DB file + uploads live. Point it at the mounted volume. |
+| `SUPABASE_URL` | **yes** | `https://xxxx.supabase.co` | Supabase project URL (Settings → Data API). |
+| `SUPABASE_SERVICE_ROLE_KEY` | **yes** | `eyJ…` | Service-role key (Settings → API Keys). **Secret** — server-side only, bypasses RLS. |
+| `SUPABASE_STORAGE_BUCKET` | no | `product-images` | Image bucket (default `product-images`). |
 | `PORT` | no | set by host | Server port (defaults 4000). |
+| `DATA_DIR` | no | `/data` | JSON-file fallback only (unused when Supabase vars are set). |
 
-On first boot with an empty `DATA_DIR`, the store self-seeds from `src/data/*`
-(full catalogue, 6 landing pages, links, workshops). After that, the volume is
-the source of truth — **back it up**.
+On first boot against an **empty** Supabase database, the store self-seeds from
+`src/data/*` (full catalogue, landing pages, links, workshops). After that,
+Supabase is the source of truth — enable Point-in-Time Recovery or scheduled
+backups in the Supabase dashboard.
+
+> **Single-writer note:** the backend holds an in-memory working set and syncs it
+> back to Postgres. Run **one** backend instance (no horizontal autoscaling) so
+> writes don't diverge. This is plenty for launch-scale traffic; move logic into
+> the database (RPC/RLS) before scaling to multiple instances.
 
 ## Railway (recommended)
 
 1. railway.app → New Project → **Deploy from GitHub repo** → `Naim3097/Nanorev-Malaysia`.
    Railway auto-detects Node, runs `npm install`, `npm run build`, `npm start`.
-2. Service → **Variables**: add `ADMIN_KEY=<strong secret>`, `DATA_DIR=/data`.
-3. Service → **Volumes** (or right-click service → Attach volume): mount path `/data`.
-4. Settings → **Networking → Generate Domain** (or attach your custom domain).
-5. Open `https://<domain>/api/health` → `{"ok":true}`. Storefront at `/`,
+2. Service → **Variables**: add `ADMIN_KEY=<strong secret>`, `SUPABASE_URL=…`,
+   `SUPABASE_SERVICE_ROLE_KEY=…`. No volume needed.
+3. Settings → **Networking → Generate Domain** (or attach your custom domain).
+4. Open `https://<domain>/api/health` → `{"ok":true}`. Storefront at `/`,
    admin at `/admin` (use your `ADMIN_KEY`).
 
 ## Render (alternative)
 
 1. New → **Web Service** → connect the repo.
 2. Build command `npm install && npm run build`, start command `npm start`.
-3. Add a **Disk**: mount path `/data`, 1GB is plenty. Env vars as above.
-   (Disks require a paid instance — the free tier is ephemeral.)
+3. Env vars as above (`ADMIN_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
+   No disk required — the free/instance tier is fine since state lives in Supabase.
 
 ## VPS (alternative)
 
 ```bash
 git clone https://github.com/Naim3097/Nanorev-Malaysia.git && cd Nanorev-Malaysia
 npm install && npm run build
-ADMIN_KEY=<secret> DATA_DIR=/var/lib/nanorev npm start   # behind nginx/caddy + TLS
+ADMIN_KEY=<secret> SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… npm start   # behind nginx/caddy + TLS
 ```
-Use a process manager (pm2/systemd) to keep it alive.
+Use a process manager (pm2/systemd) to keep it alive. Run a single instance.
 
 ## After the domain is live
 
@@ -58,7 +70,7 @@ Use a process manager (pm2/systemd) to keep it alive.
    live data either way.
 3. Submit `https://<domain>/sitemap.xml` in Google Search Console and Bing
    Webmaster Tools (Bing feeds ChatGPT search).
-4. Schedule volume backups (`nanorev.json` + `uploads/`).
+4. Enable backups in Supabase (Database → Backups / Point-in-Time Recovery).
 
 ## Still open before real customers
 

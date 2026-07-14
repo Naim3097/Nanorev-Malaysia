@@ -14,8 +14,11 @@ automotive lubricant & additive brand. One codebase, three surfaces:
 ## Stack
 
 - **Frontend:** React 18 + Vite, React Router, Context API, hand-rolled CSS design system
-- **Backend:** Node + Express 5, JSON file store (repository layer — swap
-  [server/store.mjs](server/store.mjs) for Postgres later), seeded from `src/data/*`
+- **Backend:** Node + Express 5 over **Supabase** (Postgres + Storage). The
+  repository layer ([server/store.mjs](server/store.mjs)) loads the DB into an
+  in-memory working set on boot and syncs changed rows back on each debounced
+  save. Falls back to a local JSON file when Supabase env vars are absent
+  (offline dev). Seeded from `src/data/*` on first boot against an empty DB.
 - **Builder:** dnd-kit drag-drop, schema-driven section forms ([src/builder](src/builder))
 - **SEO/GEO:** per-route heads + JSON-LD; build-time prerender of ~50 routes to static
   HTML (AI crawlers don't run JS) sourced from the **live API**; generated sitemap;
@@ -25,15 +28,32 @@ automotive lubricant & additive brand. One codebase, three surfaces:
 
 ```bash
 npm install
+cp .env.example .env   # then fill in ADMIN_KEY + Supabase creds (see below)
 
 # development (two processes)
-npm run server        # API on :4000 (auto-seeds server/data/nanorev.json)
+npm run server        # API on :4000 (Supabase, or JSON file if creds absent)
 npm run dev           # storefront on :5174, proxies /api → :4000
 
 # production (one process serves API + built storefront)
 npm run build         # dist/ + prerendered SEO pages + sitemap (uses live API if up)
-ADMIN_KEY=change-me DATA_DIR=/data npm start
+npm start             # reads .env (or host env vars)
 ```
+
+### Supabase setup (one-time)
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. **SQL Editor → New query** → paste [server/schema.sql](server/schema.sql) → **Run**
+   (creates the 7 tables + the `product-images` Storage bucket).
+3. Copy `.env.example` → `.env` and set:
+   - `SUPABASE_URL` — Settings → Data API
+   - `SUPABASE_SERVICE_ROLE_KEY` — Settings → API Keys → `service_role` (**secret,
+     server-side only** — never ship it to the browser)
+   - `ADMIN_KEY` — a long random string
+4. `npm run server` — on first boot it seeds the empty database from `src/data/*`.
+
+Leave the Supabase vars blank to use the local JSON file store instead (offline dev).
+Because images now live in Supabase Storage, the backend no longer needs a
+persistent disk — it can run on any Node host.
 
 **Deploying:** see [DEPLOY.md](DEPLOY.md) — Railway/Render/VPS with a persistent
 volume. Vercel only hosts the static frontend (no backend — demo only).

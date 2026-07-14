@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Lock, MessageCircle, Store, Wrench } from 'lucide-react'
 import { resolveLink } from '../data/landingPages'
 import { useCatalog } from '../context/CatalogContext'
@@ -18,6 +18,8 @@ const AFF_KEY = 'nanorev.aff.v1'
 // so older pages never break a newer storefront.
 export default function SalesLanding() {
   const { slug } = useParams()
+  const [searchParams] = useSearchParams()
+  const preview = searchParams.get('preview') === '1'
   const navigate = useNavigate()
   const { add } = useCart()
   const { productById } = useCatalog()
@@ -35,12 +37,15 @@ export default function SalesLanding() {
     let alive = true
     setRemote(null)
     setGone(false)
-    api(`/landing/${slug}`)
+    // preview mode: pass the admin key so draft/unpublished pages resolve,
+    // and don't record a click (previews must not skew link analytics).
+    const key = preview ? localStorage.getItem('nanorev.adminKey') || '' : ''
+    api(`/landing/${slug}${preview ? '?preview=1' : ''}`, key ? { key } : undefined)
       .then((d) => { if (alive && d?.page) setRemote(d) })
       .catch((e) => { if (alive && e.status === 404) setGone(true) })
-    apiQuiet(`/landing/${slug}/click`, { method: 'POST' })
+    if (!preview) apiQuiet(`/landing/${slug}/click`, { method: 'POST' })
     return () => { alive = false }
-  }, [slug])
+  }, [slug, preview])
 
   const resolved = gone ? null : remote || staticResolved
   const page = resolved?.page

@@ -17,7 +17,11 @@ import OrderSuccess from './pages/OrderSuccess.jsx'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
-  useEffect(() => window.scrollTo(0, 0), [pathname])
+  // block body (not an implicit return): an effect's return value is used as
+  // its cleanup, and window.scrollTo can return a non-function (e.g. a Promise
+  // when an extension patches it), which crashes React with "destroy is not a
+  // function". Returning nothing keeps ScrollToTop safe in any environment.
+  useEffect(() => { window.scrollTo(0, 0) }, [pathname])
   return null
 }
 
