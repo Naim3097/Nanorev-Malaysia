@@ -170,14 +170,22 @@ async function openSupabaseStore() {
 
   async function reload({ force = false } = {}) {
     if (!force && loadedAt && Date.now() - loadedAt < RELOAD_TTL_MS) return
-    for (const c of COLLECTIONS) {
-      const { data: rows, error } = await client
-        .from(c.table)
-        .select('doc, seq')
-        .order('seq', { ascending: !c.desc })
-      if (error) throw new Error(`Supabase load "${c.table}" failed: ${error.message}`)
-      data[c.key] = rows.map((r) => r.doc)
-    }
+    // Fetch every collection concurrently — the tables are independent, so the
+    // cost is one round-trip's latency, not the sum of seven (big win against
+    // Supabase network latency, especially on serverless cold starts).
+    const results = await Promise.all(
+      COLLECTIONS.map((c) =>
+        client
+          .from(c.table)
+          .select('doc, seq')
+          .order('seq', { ascending: !c.desc })
+          .then(({ data: rows, error }) => {
+            if (error) throw new Error(`Supabase load "${c.table}" failed: ${error.message}`)
+            return rows
+          }),
+      ),
+    )
+    COLLECTIONS.forEach((c, i) => { data[c.key] = results[i].map((r) => r.doc) })
     for (const c of COLLECTIONS) snapshot[c.key] = mapOf(c)
     dirty = false
     loadedAt = Date.now()
