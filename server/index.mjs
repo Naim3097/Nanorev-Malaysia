@@ -21,9 +21,37 @@ const PORT = process.env.PORT || 4000
 const ADMIN_KEY = process.env.ADMIN_KEY || 'nanorev-admin'
 const ATTRIBUTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000 // 30-day last click
 
-const { data, save, pricing, uploads } = await openStore()
+const { data, save, reload, flush, pricing, uploads } = await openStore()
 const app = express()
 app.use(express.json({ limit: '1mb' }))
+
+// Stateless-per-request wiring: refresh the working set from the store before
+// each /api request, and persist mutations BEFORE the response is sent. This
+// lets the exact same app run as a long-lived server (npm start / Railway) OR
+// as ephemeral Vercel serverless functions, where nothing survives between
+// invocations. Reads are TTL-cached; writes force a fresh reload first.
+app.use('/api', async (req, res, next) => {
+  if (req.path === '/health') return next() // cheap liveness probe — no store I/O
+  try {
+    await reload({ force: req.method !== 'GET' })
+  } catch (e) {
+    console.error('[store] reload failed:', e.message)
+    return res.status(503).json({ error: 'Store temporarily unavailable' })
+  }
+  if (req.method === 'GET') return next()
+  const sendJson = res.json.bind(res)
+  res.json = (body) => {
+    flush()
+      .then(() => sendJson(body))
+      .catch((e) => {
+        console.error('[store] flush failed:', e.message)
+        if (!res.headersSent) res.status(500)
+        sendJson({ error: 'Failed to save changes' })
+      })
+    return res
+  }
+  next()
+})
 
 const now = () => new Date().toISOString()
 const findProduct = (id) => data.products.find((p) => p.id === id)
@@ -543,6 +571,13 @@ app.use((err, req, res, _next) => {
   res.status(err.status || 500).json({ error: err.type === 'entity.parse.failed' ? 'Invalid JSON body' : 'Internal server error' })
 })
 
-app.listen(PORT, () => {
-  console.log(`NanoRev API on http://localhost:${PORT} (admin key: ${ADMIN_KEY === 'nanorev-admin' ? 'default — set ADMIN_KEY in production' : 'custom'})`)
-})
+// Long-lived hosts (local npm start, Railway, a VPS) bind a port. On Vercel the
+// app is imported by api/[...path].mjs and invoked per request — no port to
+// bind — so listen is skipped there.
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`NanoRev API on http://localhost:${PORT} (admin key: ${ADMIN_KEY === 'nanorev-admin' ? 'default — set ADMIN_KEY in production' : 'custom'})`)
+  })
+}
+
+export default app

@@ -8,6 +8,7 @@
     "dev": "vite",
     "server": "node server/index.mjs",
     "start": "node server/index.mjs",
+    "seed": "node scripts/seed.mjs",
     "build": "vite build && node scripts/prerender-landing.mjs",
     "test:e2e": "node scripts/e2e-test.mjs",
     "test:stress": "node scripts/stress-test.mjs",

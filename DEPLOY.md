@@ -19,17 +19,42 @@ Environment variables:
 | `PORT` | no | set by host | Server port (defaults 4000). |
 | `DATA_DIR` | no | `/data` | JSON-file fallback only (unused when Supabase vars are set). |
 
-On first boot against an **empty** Supabase database, the store self-seeds from
-`src/data/*` (full catalogue, landing pages, links, workshops). After that,
-Supabase is the source of truth — enable Point-in-Time Recovery or scheduled
-backups in the Supabase dashboard.
+Seed an **empty** Supabase database once with `npm run seed` (loads the full
+catalogue, landing pages, links and workshops from `src/data/*`). It's
+idempotent — a no-op once data exists. After that, Supabase is the source of
+truth — enable Point-in-Time Recovery or scheduled backups in the dashboard.
 
-> **Single-writer note:** the backend holds an in-memory working set and syncs it
-> back to Postgres. Run **one** backend instance (no horizontal autoscaling) so
-> writes don't diverge. This is plenty for launch-scale traffic; move logic into
-> the database (RPC/RLS) before scaling to multiple instances.
+> **Stateless-per-request:** the backend reloads its working set from Supabase
+> before each `/api` request and flushes changes back before responding, so it
+> runs equally as a long-lived process **or** as ephemeral serverless functions
+> (Vercel). Reads are briefly TTL-cached; concurrent edits to the *same* row are
+> last-writer-wins, which is fine at launch scale. (Stock decrements on
+> simultaneous orders share that window — move to a Postgres atomic update if
+> that ever matters.)
 
-## Railway (recommended)
+## Vercel
+
+The app runs fully on Vercel — the built storefront is served statically and
+`/api/*` runs as a serverless function (`api/[...path].mjs` wraps the Express
+app; `vercel.json` wires the routing). No separate backend host needed.
+
+1. Create the Supabase project and apply [server/schema.sql](server/schema.sql),
+   then seed it once from your machine:
+   `SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… npm run seed`.
+2. vercel.com → **Add New Project** → import `Naim3097/Nanorev-Malaysia`.
+   Framework auto-detects as Vite; `vercel.json` handles build + API routing.
+3. Project → **Settings → Environment Variables**, add (Production):
+   `ADMIN_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+   (and optionally `SUPABASE_STORAGE_BUCKET`). **Redeploy** after adding them —
+   env vars are baked in at deploy time.
+4. Open `https://<project>.vercel.app/api/health` → `{"ok":true}`.
+   Storefront at `/`, admin at `/admin` (use your `ADMIN_KEY`).
+
+> Note: the serverless function reloads from Supabase each request, so it needs
+> the Supabase env vars — without them it falls back to a local JSON file that
+> doesn't exist on Vercel's read-only filesystem. Always set the three vars.
+
+## Railway (alternative)
 
 1. railway.app → New Project → **Deploy from GitHub repo** → `Naim3097/Nanorev-Malaysia`.
    Railway auto-detects Node, runs `npm install`, `npm run build`, `npm start`.

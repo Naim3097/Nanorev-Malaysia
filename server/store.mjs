@@ -4,22 +4,28 @@
 //   • Supabase Postgres  — when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set
 //   • JSON file          — fallback for local dev without Supabase
 //
-// Either way openStore() returns the same contract so server/index.mjs is
-// backend-agnostic:  { data, save, flush, pricing, uploads }
+// STATELESS-PER-REQUEST contract (so the same code runs as a long-lived
+// `npm start` process AND as ephemeral Vercel serverless functions):
 //
-//   data     in-memory working set (arrays the routes mutate directly)
-//   save()   debounced persist — flushes at most every 300ms
-//   flush()  force a synchronous-ish persist (awaited on shutdown)
-//   pricing  pricing rules, always loaded from src/utils/pricing.js
-//   uploads  { dir, save(buf, base, ext, contentType) } image sink
+//   { data, save, reload, flush, pricing, uploads }
 //
-// On first boot against an EMPTY database it seeds itself from the frontend's
-// data modules (src/data/*.js) so backend and storefront start in sync.
+//   data      in-memory working set (arrays the routes mutate directly)
+//   reload()  refresh `data` from the source of truth. TTL-cached for reads;
+//             pass { force:true } before a write so it starts from fresh state.
+//   save()    mark the working set dirty (a write happened)
+//   flush()   await-persist dirty changes (diff vs last load → upsert/delete)
+//   pricing   pricing rules (imported directly from src/utils/pricing.js)
+//   uploads   { dir, save(buf, base, ext, contentType) } image sink
+//
+// server/index.mjs calls reload() before each /api request and flush() before
+// sending the response, so no state has to survive between invocations.
+// Seeding an empty database is a one-off (scripts/seed.mjs), never in the hot
+// path — so the runtime never needs esbuild.
 
-import { build } from 'esbuild'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import * as pricing from '../src/utils/pricing.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // DATA_DIR: local JSON db + uploads (JSON-file mode only). In Supabase mode the
@@ -32,6 +38,10 @@ const DB_FILE = resolve(DATA_DIR, 'nanorev.json')
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'product-images'
+
+// reads may be up to this stale within a warm instance; writes always force a
+// fresh reload first. Keeps per-request Supabase round-trips down under load.
+const RELOAD_TTL_MS = Number(process.env.STORE_RELOAD_TTL_MS ?? 3000)
 
 // key = the field on the in-memory object, table = Postgres table,
 // pk = the object property used as the row id, desc = load newest-first
@@ -51,7 +61,12 @@ const emptyData = () => ({
   pages: [], links: [], orders: [], commissions: [],
 })
 
+// Seed data comes from the frontend's data modules. landingPages.js uses
+// extensionless imports (Vite-style), so bundle with esbuild — but ONLY here,
+// off the request path (fresh file store, or scripts/seed.mjs). The runtime
+// never imports this.
 async function loadSeedModules() {
+  const { build } = await import('esbuild')
   const bundlePath = resolve(root, 'node_modules/.prerender/server-seed.mjs')
   mkdirSync(dirname(bundlePath), { recursive: true })
   await build({
@@ -60,7 +75,6 @@ async function loadSeedModules() {
         export { products } from './src/data/products.js'
         export { categories } from './src/data/categories.js'
         export { workshops, landingPages, affiliateLinks } from './src/data/landingPages.js'
-        export * as pricing from './src/utils/pricing.js'
       `,
       resolveDir: root,
     },
@@ -72,7 +86,7 @@ async function loadSeedModules() {
   return import(pathToFileURL(bundlePath).href + `?t=${Date.now()}`)
 }
 
-function seedFrom(mods) {
+export function seedFrom(mods) {
   const now = new Date().toISOString()
   return {
     products: mods.products.map((p) => ({ ...p, stock: 100, active: true })),
@@ -93,63 +107,92 @@ function seedFrom(mods) {
 }
 
 export async function openStore() {
-  const mods = await loadSeedModules() // pricing rules always come from source
-  if (SUPABASE_URL && SUPABASE_KEY) return openSupabaseStore(mods)
-  return openFileStore(mods)
+  if (SUPABASE_URL && SUPABASE_KEY) return openSupabaseStore()
+  return openFileStore()
 }
 
-// ── Supabase Postgres backend ─────────────────────────────────────
-async function openSupabaseStore(mods) {
-  // supabase-js eagerly constructs a Realtime (WebSocket) client even though we
-  // only use Postgres + Storage. Node < 22 has no native WebSocket, so polyfill
-  // it with `ws` to let the client initialize. (Realtime is never connected.)
+// Build a Supabase client. supabase-js eagerly constructs a Realtime (WebSocket)
+// client even though we only use Postgres + Storage; Node < 22 has no native
+// WebSocket, so polyfill it with `ws`. (Realtime is never connected.)
+export async function makeSupabaseClient() {
   if (!globalThis.WebSocket) {
     const { default: WS } = await import('ws')
     globalThis.WebSocket = WS
   }
   const { createClient } = await import('@supabase/supabase-js')
-  const client = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  return createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
+}
 
-  // load every collection into memory (the routes read/write this working set)
-  const data = emptyData()
+// One-time seeding for a fresh deploy: if the Supabase tables are empty, load
+// the frontend data modules and populate them. Idempotent (upsert by id) and
+// safe to run repeatedly — a no-op once data exists. Used by scripts/seed.mjs,
+// never on the request path.
+export async function seedSupabaseIfEmpty() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set')
+  const client = await makeSupabaseClient()
   let total = 0
   for (const c of COLLECTIONS) {
-    const { data: rows, error } = await client
-      .from(c.table)
-      .select('doc, seq')
-      .order('seq', { ascending: !c.desc })
-    if (error) throw new Error(`Supabase load "${c.table}" failed: ${error.message}`)
-    data[c.key] = rows.map((r) => r.doc)
-    total += rows.length
+    const { count, error } = await client.from(c.table).select('*', { count: 'exact', head: true })
+    if (error) throw new Error(`count "${c.table}" failed: ${error.message}`)
+    total += count || 0
   }
+  if (total > 0) return { seeded: false, existingRows: total }
 
-  // snapshot of what's persisted, keyed by pk → JSON, for change detection
+  const seed = seedFrom(await loadSeedModules())
+  const counts = {}
+  for (const c of COLLECTIONS) {
+    const rows = seed[c.key].map((o) => ({ id: String(o[c.pk]), doc: o }))
+    counts[c.key] = rows.length
+    if (rows.length) {
+      const { error } = await client.from(c.table).upsert(rows, { onConflict: 'id' })
+      if (error) throw new Error(`seed "${c.table}" failed: ${error.message}`)
+    }
+  }
+  return { seeded: true, counts }
+}
+
+// ── Supabase Postgres backend ─────────────────────────────────────
+async function openSupabaseStore() {
+  const client = await makeSupabaseClient()
+
+  const data = emptyData()
+  const snapshot = {} // pk → JSON of last-loaded row, for change detection
+  let dirty = false
+  let loadedAt = 0
+
   const mapOf = (c) => {
     const m = new Map()
     for (const o of data[c.key]) m.set(String(o[c.pk]), JSON.stringify(o))
     return m
   }
-  const snapshot = {}
-  for (const c of COLLECTIONS) snapshot[c.key] = mapOf(c)
 
-  let dirty = false
-  let timer = null
-  let inFlight = false
+  async function reload({ force = false } = {}) {
+    if (!force && loadedAt && Date.now() - loadedAt < RELOAD_TTL_MS) return
+    for (const c of COLLECTIONS) {
+      const { data: rows, error } = await client
+        .from(c.table)
+        .select('doc, seq')
+        .order('seq', { ascending: !c.desc })
+      if (error) throw new Error(`Supabase load "${c.table}" failed: ${error.message}`)
+      data[c.key] = rows.map((r) => r.doc)
+    }
+    for (const c of COLLECTIONS) snapshot[c.key] = mapOf(c)
+    dirty = false
+    loadedAt = Date.now()
+  }
 
   async function flush() {
-    if (inFlight || !dirty) return
-    inFlight = true
+    if (!dirty) return
     dirty = false
 
-    // Diff each collection synchronously (single-threaded → consistent),
-    // then apply the network writes. Mutations during the await mark dirty
-    // again and are caught by the next flush.
+    // Diff each collection synchronously (single-threaded → consistent), then
+    // apply network writes. Only rows that changed since the last load move.
     const plan = []
     for (const c of COLLECTIONS) {
       const cur = mapOf(c)
-      const prev = snapshot[c.key]
+      const prev = snapshot[c.key] || new Map()
       const upserts = []
       const deletes = []
       for (const [id, json] of cur) if (prev.get(id) !== json) upserts.push({ id, doc: JSON.parse(json) })
@@ -170,33 +213,12 @@ async function openSupabaseStore(mods) {
       }
       for (const { c, cur } of plan) snapshot[c.key] = cur
     } catch (e) {
-      dirty = true // retry on the next tick — nothing is lost from memory
-      console.error('[store] Supabase flush failed, will retry:', e.message)
-    } finally {
-      inFlight = false
-      if (dirty) schedule()
+      dirty = true // caller surfaces the failure; nothing is lost from memory
+      throw e
     }
   }
 
-  const schedule = () => {
-    if (timer) return
-    timer = setTimeout(() => { timer = null; flush() }, 300)
-  }
-  const save = () => { dirty = true; schedule() }
-
-  // Graceful shutdown: exit handlers can't await, so flush on the signals a
-  // host sends (Railway/Render send SIGTERM). A hard crash loses ≤300ms of writes.
-  const shutdown = async () => { try { await flush() } catch { /* logged */ } process.exit(0) }
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
-
-  // seed an empty database from the frontend data modules
-  if (total === 0) {
-    Object.assign(data, seedFrom(mods))
-    dirty = true
-    await flush()
-    console.log('[store] Seeded empty Supabase database from src/data')
-  }
+  const save = () => { dirty = true }
 
   const uploads = {
     dir: null, // images are served by Supabase Storage's CDN, not Express
@@ -211,37 +233,41 @@ async function openSupabaseStore(mods) {
     },
   }
 
-  console.log(`[store] Supabase backend — ${total} rows loaded (${new URL(SUPABASE_URL).host})`)
-  return { data, save, flush, pricing: mods.pricing, uploads }
+  return { data, save, reload, flush, pricing, uploads }
 }
 
 // ── JSON file backend (fallback / offline dev) ────────────────────
-async function openFileStore(mods) {
+async function openFileStore() {
   mkdirSync(DATA_DIR, { recursive: true })
   const uploadDir = resolve(DATA_DIR, 'uploads')
   mkdirSync(uploadDir, { recursive: true })
 
-  const fresh = !existsSync(DB_FILE)
-  const data = fresh ? seedFrom(mods) : JSON.parse(readFileSync(DB_FILE, 'utf8'))
+  // seed a fresh file store from the frontend data modules on first run
+  if (!existsSync(DB_FILE)) {
+    const mods = await loadSeedModules()
+    const tmp = DB_FILE + '.tmp'
+    writeFileSync(tmp, JSON.stringify(seedFrom(mods), null, 2))
+    renameSync(tmp, DB_FILE)
+    console.log('[store] Seeded fresh JSON file store from src/data')
+  }
 
+  const data = emptyData()
   let dirty = false
-  let timer = null
-  const flush = () => {
+
+  async function reload() {
+    Object.assign(data, JSON.parse(readFileSync(DB_FILE, 'utf8')))
+    dirty = false
+  }
+
+  async function flush() {
     if (!dirty) return
     dirty = false
     const tmp = DB_FILE + '.tmp'
     writeFileSync(tmp, JSON.stringify(data, null, 2))
     renameSync(tmp, DB_FILE)
   }
-  const save = () => {
-    dirty = true
-    if (timer) return
-    timer = setTimeout(() => { timer = null; flush() }, 300)
-  }
-  process.on('exit', flush)
-  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0))
 
-  if (fresh) { dirty = true; flush() }
+  const save = () => { dirty = true }
 
   const uploads = {
     dir: uploadDir, // Express serves these via express.static
@@ -252,6 +278,7 @@ async function openFileStore(mods) {
     },
   }
 
+  await reload()
   console.log(`[store] JSON file backend — ${DB_FILE}`)
-  return { data, save, flush, pricing: mods.pricing, uploads }
+  return { data, save, reload, flush, pricing, uploads }
 }
