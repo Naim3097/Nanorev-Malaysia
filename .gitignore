@@ -17,3 +17,8 @@ server/data/
 
 # local MCP server config (personal)
 .mcp.json
+
+# Next.js
+.next/
+next-env.d.ts
+*.tsbuildinfo

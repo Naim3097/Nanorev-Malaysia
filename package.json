@@ -1,37 +1,38 @@
 {
   "name": "nanorev-store",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "NanoRev Malaysia - Nano Revolution Autolube. Lubricant distributor e-commerce store.",
   "scripts": {
-    "dev": "vite",
-    "server": "node server/index.mjs",
-    "start": "node server/index.mjs",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
     "seed": "node scripts/seed.mjs",
-    "build": "vite build && node scripts/prerender-landing.mjs",
     "test:e2e": "node scripts/e2e-test.mjs",
-    "test:stress": "node scripts/stress-test.mjs",
-    "preview": "vite preview"
+    "test:stress": "node scripts/stress-test.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@supabase/supabase-js": "^2.109.0",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
     "lucide-react": "^0.460.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0",
-    "ws": "^8.21.0"
+    "next": "^16.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
   }
 }

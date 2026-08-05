@@ -5,7 +5,7 @@
 //
 //   node scripts/stress-test.mjs          (server must be running)
 
-const BASE = process.env.API_URL || 'http://localhost:4000'
+const BASE = process.env.API_URL || 'http://localhost:3000'
 const KEY = process.env.ADMIN_KEY || 'nanorev-admin'
 const H = { 'content-type': 'application/json', 'x-admin-key': KEY }
 

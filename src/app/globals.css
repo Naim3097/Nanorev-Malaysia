@@ -1,0 +1,55 @@
+/* Tailwind v4 entry for the NanoRev storefront.
+ *
+ * Preflight is deliberately NOT imported. The design system in index.css
+ * already ships its own reset, and preflight's heading/list normalisation
+ * would silently restyle pages that rely on the existing cascade. We take
+ * Tailwind's theme + utilities only.
+ *
+ * index.css lands in the `components` layer so utilities always win over it
+ * — that is what makes incremental adoption safe: adding `p-6` to existing
+ * markup overrides the hand-written rule instead of losing to it.
+ */
+@layer theme, base, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import '../index.css' layer(components);
+
+/* Scan the whole src tree for class names (no preflight import means no
+   automatic source detection root). */
+@source '../';
+
+/* ── Brand tokens ──────────────────────────────────────────────────
+   Single source of truth for the palette. index.css aliases these into
+   its original --blue / --ink / … names, so every existing rule keeps
+   working while `bg-blue`, `text-ink`, `rounded-card` etc. exist too. */
+@theme {
+  --color-blue: #1832c9;
+  --color-blue-deep: #1329a3;
+  --color-red: #e01f26;
+  --color-red-soft: #fdecec;
+  --color-ink: #14161c;
+  --color-ink-soft: #2a2d36;
+  --color-muted: #6b7280;
+  --color-line: #e4e7ee;
+  --color-line-soft: #eef0f5;
+
+  --color-bg: #f4f6f9;
+  --color-card: #ffffff;
+  --color-tile: #eef1f6;
+  --color-soft: #eaeefc; /* faint blue wash for active states */
+  --color-green: #17915a;
+  --color-green-soft: #e6f4ec;
+  --color-danger: #c0322a;
+
+  --radius-card: 12px;
+  --radius-card-sm: 9px;
+
+  --shadow-sm: 0 1px 2px rgba(20, 22, 28, 0.05), 0 2px 12px rgba(20, 22, 28, 0.05);
+  --shadow-md: 0 12px 30px rgba(20, 22, 28, 0.1);
+  --shadow-lg: 0 24px 60px rgba(20, 22, 28, 0.22);
+
+  --container-site: 1200px;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}

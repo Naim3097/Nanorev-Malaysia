@@ -6,7 +6,7 @@
 //
 //   node scripts/e2e-test.mjs        (server must be running)
 
-const BASE = process.env.API_URL || 'http://localhost:4000'
+const BASE = process.env.API_URL || 'http://localhost:3000'
 const KEY = process.env.ADMIN_KEY || 'nanorev-admin'
 
 const req = async (path, method = 'GET', body, headers = {}) => {
@@ -303,6 +303,50 @@ group('Rate limiting')
   const limited = burst.filter((r) => r.status === 429).length
   t(limited > 0, `click burst rate-limited (${ok} ok, ${limited} × 429)`)
   t(ok + limited === 700, 'every burst request got a clean JSON verdict (no 500s / network drops)')
+}
+
+// ════ G10 · Payment gateway gating & webhook security ════
+// Real money only flows for pages explicitly switched to LeanX, and only a
+// signature-verified webhook may confirm a payment. These assertions need no
+// LeanX credentials — they prove the gates hold, which is what protects money.
+group('Payments — gating & webhook security')
+{
+  // the QA funnel page is left on the default gateway
+  const methods = await req('/payments/methods?slug=qa-funnel')
+  t(methods.status === 200 && methods.body?.gateway === 'mock',
+    `page without an explicit gateway defaults to mock (${methods.body?.gateway})`)
+
+  const unknownSlug = await req('/payments/methods?slug=definitely-not-a-page')
+  t(unknownSlug.body?.gateway === 'mock', 'unknown slug never resolves to a live gateway')
+
+  // a client cannot opt itself into real payment against a mock page
+  const forced = await req('/payments/leanx/create', 'POST', {
+    slug: 'qa-funnel',
+    paymentServiceId: 'FAKE_BANK',
+    items: [{ id: 'qa-prod', qty: 1 }],
+    details: { name: 'QA', phone: '0123456789', email: 'qa@example.com', mode: 'pickup' },
+  })
+  t(forced.status === 400 && /does not accept/i.test(forced.body?.error || ''),
+    'create-bill refused for a page that is not on LeanX')
+
+  const noBank = await req('/payments/leanx/create', 'POST', { slug: 'qa-funnel', items: [], details: {} })
+  t(noBank.status === 400, 'create-bill without a chosen bank → 400')
+
+  // webhook must fail closed on a missing / wrong signature
+  const payload = JSON.stringify({ bill_no: 'QA-BILL', invoice_ref: 'QA-NOPE', status: 'success', amount: '1.00' })
+  const unsigned = await req('/payments/leanx/webhook', 'POST', payload)
+  t(unsigned.status === 401 || unsigned.status === 503,
+    `unsigned webhook rejected (${unsigned.status})`)
+  const badSig = await req('/payments/leanx/webhook', 'POST', payload, { 'x-leanx-signature': 'deadbeef' })
+  t(badSig.status === 401 || badSig.status === 503,
+    `bad-signature webhook rejected (${badSig.status})`)
+  t(unsigned.body?.error !== undefined, 'rejected webhook still answers JSON')
+
+  // receipts are token-gated — a guessable ref alone must reveal nothing
+  const noToken = await req('/orders/QA-NOPE/status')
+  t(noToken.status === 401, 'order status without a token → 401')
+  const wrongToken = await req('/orders/QA-NOPE/status?t=wrong')
+  t(wrongToken.status === 401, 'order status with a wrong token → 401 (no existence leak)')
 }
 
 // ════ Cleanup & residue check ════
