@@ -64,6 +64,11 @@ async function call<T>(path: string, body: Record<string, unknown>): Promise<T> 
 
   if (!payload) throw new LeanXError(`LeanX returned a non-JSON response (${res.status})`)
   if (payload.response_code !== OK) {
+    // LeanX's undocumented codes (e.g. 4566 "FAILED") say nothing on their own,
+    // and `breakdown_errors` is where the actual field-level reason lives. Log
+    // the whole envelope server-side — it is the only way to diagnose a refusal.
+    // Safe to log: the response echoes bill fields, never our credentials.
+    console.error(`[leanx] ${path} rejected:`, JSON.stringify(payload))
     const detail = payload.description || JSON.stringify(payload.breakdown_errors ?? {})
     throw new LeanXError(`LeanX ${path} failed (${payload.response_code ?? res.status}): ${detail}`)
   }
@@ -165,6 +170,14 @@ export function normalisePhone(raw: string): string {
 export async function createBillSilent(input: CreateBillInput): Promise<CreatedBill> {
   if (!COLLECTION_UUID) throw new LeanXError('LEANX_COLLECTION_UUID is not set')
 
+  // docs.leanx.io types payment_service_id as a NUMBER (`"payment_service_id": 33`).
+  // The list endpoint returns it as a number too; we stringify it for React keys
+  // and transport, so it has to be converted back here or LeanX refuses the bill.
+  const serviceId = Number(input.paymentServiceId)
+  if (!Number.isFinite(serviceId)) {
+    throw new LeanXError(`payment_service_id is not numeric: ${input.paymentServiceId}`)
+  }
+
   const data = await call<{ redirect_url?: string; bill_no?: string }>(
     '/api/v1/merchant/create-bill-silent',
     {
@@ -178,7 +191,7 @@ export async function createBillSilent(input: CreateBillInput): Promise<CreatedB
       phone_number: normalisePhone(input.phone),
       redirect_url: input.redirectUrl,
       callback_url: input.callbackUrl,
-      payment_service_id: input.paymentServiceId,
+      payment_service_id: serviceId,
     },
   )
 
