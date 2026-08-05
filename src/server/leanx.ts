@@ -93,22 +93,50 @@ export async function listPaymentServices(paymentType: PaymentType): Promise<Pay
     payment_model_reference_id: 1, // 1 = B2C (individual)
   })
 
-  let services: PaymentService[] = []
+  let services: RawService[] = []
   const d = data as {
-    payment_services?: PaymentService[]
-    list?: { data?: Record<string, PaymentService[]>[] }
+    payment_services?: RawService[]
+    list?: { data?: Record<string, RawService[]>[] }
   }
   if (Array.isArray(data)) {
-    services = data as PaymentService[] // CASE A — flat array
+    services = data as RawService[] // CASE A — flat array
   } else if (Array.isArray(d?.payment_services)) {
     services = d.payment_services // CASE B — object wrapper
   } else if (Array.isArray(d?.list?.data)) {
     services = d.list.data[0]?.[paymentType] ?? [] // CASE C — deep nested
   }
 
-  return services.filter(
-    (s) => s?.payment_service_id && (!s.status || s.status.toLowerCase() === 'active'),
-  )
+  return services.map(normalise).filter((s): s is PaymentService => s !== null)
+}
+
+/**
+ * A live LeanX account returns `{payment_service_id: 65, name: 'Affin Bank',
+ * record_status: 'Active'}` — NOT the `payment_service_name` / `status` the
+ * docs show. Both spellings are normalised here so the rest of the app (and the
+ * bank buttons the customer clicks) sees one stable shape. Getting this wrong
+ * renders a grid of blank, unlabelled buttons.
+ */
+interface RawService {
+  payment_service_id?: string | number
+  payment_service_name?: string
+  name?: string
+  status?: string
+  record_status?: string
+  record_status_id?: number
+}
+
+function normalise(s: RawService): PaymentService | null {
+  if (s?.payment_service_id == null) return null
+
+  const name = s.payment_service_name || s.name
+  if (!name) return null // an unlabelled button is worse than no button
+
+  // Only one of these fields is present in practice; absent means "not filtered".
+  const state = (s.status || s.record_status || '').toLowerCase()
+  if (state && state !== 'active') return null
+  if (s.record_status_id != null && s.record_status_id !== 1) return null
+
+  return { payment_service_id: String(s.payment_service_id), payment_service_name: name }
 }
 
 // ── Bill creation ────────────────────────────────────────────────
