@@ -43,12 +43,17 @@ export function baseUrl(): string {
   return SITE_URL.replace(/\/$/, '')
 }
 
-async function call<T>(path: string, body: Record<string, unknown>): Promise<T> {
+async function call<T>(
+  path: string,
+  body: Record<string, unknown>,
+  query?: Record<string, string>,
+): Promise<T> {
   if (!AUTH_TOKEN) throw new LeanXError('LEANX_AUTH_TOKEN is not set')
 
+  const qs = query ? `?${new URLSearchParams(query)}` : ''
   let res: Response
   try {
-    res = await fetch(`${API_HOST}${path}`, {
+    res = await fetch(`${API_HOST}${path}${qs}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'auth-token': AUTH_TOKEN },
       body: JSON.stringify(body),
@@ -232,22 +237,40 @@ export interface TransactionStatus {
  * its documented habit of 404-ing live bills. A null here means "unknown",
  * never "failed"; only an explicit failed/cancelled may fail an order.
  */
+/**
+ * Pull a bill's outcome from LeanX.
+ *
+ * This is the ONLY way to learn about a payment that did not succeed: the
+ * callback fires on success alone, so a cancelled or failed bill is silent and
+ * the order would otherwise sit `pending` forever.
+ *
+ * The endpoint is `manual-checking-transaction` with `invoice_no` as a QUERY
+ * parameter — not `transaction-status` with a JSON body, which is what
+ * LEANX_SAAS_INTEGRATION_GUIDE.md says. The wrong path answers "Requested
+ * endpoint is forbidden", which reads like a permissions problem and is not.
+ *
+ * Returns null on any error — "unknown", never "failed". Only an explicit
+ * verdict from LeanX is allowed to move an order.
+ */
 export async function transactionStatus(billNo: string): Promise<TransactionStatus | null> {
   try {
     const data = await call<{
-      bill_no?: string
-      invoice_ref?: string
-      amount?: number | string
-      status?: string
-      payment_method?: string
-    }>('/api/v1/merchant/transaction-status', { bill_no: billNo })
-    if (!data) return null
+      transaction_details?: {
+        invoice_no?: string
+        amount?: number | string
+        invoice_status?: string
+        bank_provider?: string
+        providerTypeReference?: string
+      }
+    }>('/api/v1/merchant/manual-checking-transaction', {}, { invoice_no: billNo })
+
+    const td = data?.transaction_details
+    if (!td) return null
     return {
-      billNo: data.bill_no,
-      invoiceRef: data.invoice_ref,
-      amount: data.amount === undefined ? undefined : Number(data.amount),
-      status: mapStatus(data.status),
-      paymentMethod: data.payment_method,
+      billNo: td.invoice_no,
+      amount: td.amount == null ? undefined : Number(td.amount),
+      status: mapStatus(td.invoice_status),
+      paymentMethod: td.bank_provider || td.providerTypeReference,
     }
   } catch {
     return null
