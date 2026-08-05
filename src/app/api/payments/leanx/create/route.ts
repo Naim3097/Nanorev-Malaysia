@@ -1,4 +1,4 @@
-import { bad, body, json, rateLimit, withStoreWrite } from '@/server/request'
+import { bad, body, json, rateLimit, withStoreDurable } from '@/server/request'
 import { baseUrl, createBillSilent, leanxConfigured, LeanXError } from '@/server/leanx'
 import { accessToken, buildOrderDraft, serverOrderRef, type OrderRequestBody } from '@/server/orders'
 import { resolveSlug } from '@/server/resolve'
@@ -16,7 +16,7 @@ interface CreateBody extends OrderRequestBody {
 }
 
 export function POST(req: Request) {
-  return withStoreWrite(async (store) => {
+  return withStoreDurable(async (store) => {
     rateLimit(req, 'payments', 60)
     const { data } = store
     const payload = await body<CreateBody>(req)
@@ -61,7 +61,10 @@ export function POST(req: Request) {
         phone: details.phone,
         paymentServiceId: payload.paymentServiceId,
         // Both URLs are built from a server-side base, never a request header.
-        redirectUrl: `${base}/order/success?ref=${encodeURIComponent(ref)}&t=${token}`,
+        // Funnel buyers return inside the funnel (BM, no store chrome) rather
+        // than being dropped onto the English storefront receipt. `slug` is
+        // already known to resolve to a published page — checked above.
+        redirectUrl: `${base}/l/${encodeURIComponent(payload.slug!)}/order?ref=${encodeURIComponent(ref)}&t=${token}`,
         callbackUrl: `${base}/api/payments/leanx/webhook`,
       })
     } catch (e) {

@@ -101,13 +101,16 @@ export default function GatewayReceipt({
         <div className="big" style={{ color: 'var(--blue)' }}>
           {gaveUp ? <Clock size={44} strokeWidth={1.4} /> : <Loader2 size={44} strokeWidth={1.4} className="spin" />}
         </div>
-        <h2>{gaveUp ? 'Still confirming your payment' : 'Confirming your payment…'}</h2>
+        <h2>{gaveUp ? 'Payment not confirmed' : 'Confirming your payment…'}</h2>
         <p>
           Order <b>{order.ref}</b>. {gaveUp
-            ? 'Your bank is taking longer than usual. If you completed payment, it will be confirmed shortly — keep this reference and refresh in a moment.'
+            // The gateway only calls back on success, so "no news" most often
+            // means the buyer cancelled. Saying "still confirming" forever reads
+            // as a broken page — name both possibilities instead.
+            ? 'We haven’t received confirmation. If you cancelled, you have not been charged. If you did pay, keep this reference and contact us — we’ll check it.'
             : 'This usually takes a few seconds. Please don’t close this page.'}
         </p>
-        {gaveUp && <Link href="/shop" className="btn btn-ghost btn-lg">Continue shopping</Link>}
+        {gaveUp && <Link href="/checkout" className="btn btn-primary btn-lg">Try again</Link>}
       </div>
     </div>
   )

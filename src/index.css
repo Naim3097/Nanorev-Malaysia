@@ -827,3 +827,26 @@ input, select, textarea { font-family: inherit; }
   .admin .grid-2 { grid-template-columns: 1fr; }
   .stat .v { font-size: 1.2rem; }
 }
+
+/* ============ Funnel payment result (/l/<slug>/order) ============ */
+.fr-card { max-width: 560px; margin: 0 auto; padding: 56px 26px 64px; text-align: center; }
+.fr-icon { display: inline-flex; margin-bottom: 14px; }
+.fr-ok .fr-icon { color: var(--ok, #12894f); }
+.fr-bad .fr-icon { color: var(--danger); }
+.fr-wait .fr-icon { color: var(--blue); }
+.fr-card h1 { font-size: 1.7rem; font-weight: 900; letter-spacing: -0.02em; margin: 0 0 10px; }
+.fr-lead { color: var(--muted); margin: 0 0 26px; line-height: 1.6; }
+.fr-lines { text-align: left; background: #fff; border-radius: var(--radius-card, 12px);
+  box-shadow: var(--shadow-lg); padding: 18px 20px; margin-bottom: 18px; }
+.fr-line { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0;
+  font-size: 0.95rem; }
+.fr-line em { color: var(--muted); font-style: normal; }
+.fr-total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 12px;
+  font-weight: 800; font-size: 1.05rem; }
+.fr-note { color: var(--muted); font-size: 0.88rem; margin: 0 0 22px; line-height: 1.6; }
+.fr-back { display: block; margin-top: 16px; color: var(--muted); font-weight: 600;
+  font-size: 0.92rem; }
+@media (max-width: 560px) {
+  .fr-card { padding: 40px 4px 48px; }
+  .fr-card h1 { font-size: 1.4rem; }
+}

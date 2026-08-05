@@ -77,7 +77,7 @@ if (!IS_SERVERLESS && !(globalThis as { __nanorevShutdown?: boolean }).__nanorev
 
 type Handler = (store: Store) => Promise<Response> | Response
 
-async function run(handler: Handler, write: boolean): Promise<Response> {
+async function run(handler: Handler, write: boolean, durable = false): Promise<Response> {
   const store = await getStore()
   try {
     if (IS_SERVERLESS) await store.reload({ force: write })
@@ -98,7 +98,7 @@ async function run(handler: Handler, write: boolean): Promise<Response> {
   }
 
   if (write) {
-    if (IS_SERVERLESS) {
+    if (IS_SERVERLESS || durable) {
       try {
         await store.flush()
       } catch (e) {
@@ -120,6 +120,26 @@ export function withStore(handler: Handler): Promise<Response> {
 /** Write path: serialised against other writes, then persisted. */
 export function withStoreWrite(handler: Handler): Promise<Response> {
   return serialize(() => run(handler, true))
+}
+
+/**
+ * Write path for money: never returns until the change is durable.
+ *
+ * The debounced flush on long-lived hosts is right for click counters and
+ * wrong for payments. Two concrete failures it prevents:
+ *
+ *  • create-bill — the buyer is handed to the gateway before the pending order
+ *    reaches disk. A crash in that window loses the order while the customer
+ *    pays, and the webhook then matches nothing.
+ *  • webhook — answering 200 tells the gateway to stop redelivering. If `paid`
+ *    is still only in memory, a crash loses the sale with no retry coming.
+ *
+ * It also removes a visible race: page routes and route handlers are separate
+ * module instances, so an unflushed write is invisible to the page the buyer
+ * is redirected to.
+ */
+export function withStoreDurable(handler: Handler): Promise<Response> {
+  return serialize(() => run(handler, true, true))
 }
 
 /** Throws 401 unless the request carries the admin key. */

@@ -24,7 +24,10 @@ export default async function OrderSuccessPage({ searchParams }: { searchParams:
   const { ref, t } = await searchParams
 
   if (ref && t) {
-    const order = (await readStore()).orders.find((o) => o.ref === ref)
+    // force: see readStore — a buyer returning from the gateway may beat this
+    // instance's TTL, and a stale miss would silently downgrade a real receipt
+    // to the generic thank-you page.
+    const order = (await readStore({ force: true })).orders.find((o) => o.ref === ref)
     if (order && order.accessToken && order.accessToken === t) {
       const snapshot: OrderSnapshot = {
         ref: order.ref,

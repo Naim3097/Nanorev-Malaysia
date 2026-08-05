@@ -304,7 +304,9 @@ function openFileStore(): Store {
   const data = emptyData()
   let dirty = false
 
-  async function reload() {
+  // `force` is accepted for signature parity with the Supabase backend; the
+  // file store has no TTL to skip, so it is simply ignored.
+  async function reload(_opts: { force?: boolean } = {}) {
     // Same rule as the Supabase backend: persist before re-reading, so a read
     // can never roll back an un-flushed write.
     if (dirty) await flush()

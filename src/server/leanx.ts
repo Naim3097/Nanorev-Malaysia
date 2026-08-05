@@ -281,20 +281,91 @@ export interface WebhookPayload {
 }
 
 /** Some deliveries use generic key names — accept both spellings. */
-export function parseWebhook(rawBody: string): WebhookPayload | null {
+/**
+ * Verify a compact HS256 JWT and return its claims, or null.
+ *
+ * LeanX's documented callback is `{data: "<JWT>", response_code: 2100}` signed
+ * with the collection's Hash Key — the JWT *is* the authentication, so this
+ * must fail closed on anything it cannot fully verify.
+ */
+function verifyJwtHS256(token: string, secret: string): Record<string, unknown> | null {
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  const [header, payload, signature] = parts
+
+  const expected = createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url')
+  const a = Buffer.from(signature, 'utf-8')
+  const b = Buffer.from(expected, 'utf-8')
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null
+
+  try {
+    const alg = (JSON.parse(Buffer.from(header, 'base64url').toString('utf-8')) as { alg?: string }).alg
+    // Reject "none" and any asymmetric alg — otherwise an attacker picks the
+    // algorithm and our HMAC check becomes meaningless.
+    if (alg !== 'HS256') return null
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as unknown
+    return claims && typeof claims === 'object' ? (claims as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+
+/**
+ * Read a webhook body in EITHER documented shape, verifying it as we go.
+ *
+ * • docs.leanx.io: `{data: <JWT signed with the Hash Key>}` — no header.
+ * • LEANX_SAAS_INTEGRATION_GUIDE.md: plain JSON + `x-leanx-signature` over the
+ *   raw bytes.
+ *
+ * The two disagree and we cannot tell from the outside which a given account
+ * sends, so both are accepted — each on its own proof, neither weakening the
+ * other. Returns null when the body is unreadable OR unverified; the caller
+ * must treat null as "reject", never as "ignore".
+ */
+export function parseWebhook(
+  rawBody: string,
+  signature: string,
+  secret: string,
+): WebhookPayload | null {
+  if (!secret) return null // fail closed
+
   let body: Record<string, unknown>
   try {
     body = JSON.parse(rawBody) as Record<string, unknown>
   } catch {
     return null
   }
-  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+
+  // ── Shape 1: JWT envelope, self-authenticating ──
+  const jwt = str(body.data)
+  if (jwt) {
+    const claims = verifyJwtHS256(jwt, secret)
+    if (!claims) return null
+    const client = (claims.client_data ?? {}) as Record<string, unknown>
+    const amount = claims.amount
+    return {
+      billNo: str(claims.invoice_no) ?? str(claims.transaction_invoice_no),
+      // `order_id` is literally the string "None" when unset — treat that as absent.
+      invoiceRef:
+        str(claims.invoice_ref) ??
+        (str(client.order_id) === 'None' ? undefined : str(client.order_id)),
+      status: mapStatus(str(claims.invoice_status)),
+      amount: amount == null ? undefined : Number(amount),
+      paymentMethod: str(claims.fpx_debit_status) ? 'fpx' : undefined,
+      raw: claims,
+    }
+  }
+
+  // ── Shape 2: plain JSON authenticated by the header signature ──
+  if (!verifyWebhook(rawBody, signature, secret)) return null
   const amount = body.amount
   return {
     billNo: str(body.bill_no) ?? str(body.transaction_id),
     invoiceRef: str(body.invoice_ref) ?? str(body.order_id),
     status: mapStatus(str(body.status)),
-    amount: amount === undefined || amount === null ? undefined : Number(amount),
+    amount: amount == null ? undefined : Number(amount),
     paymentMethod: str(body.payment_method),
     raw: body,
   }
