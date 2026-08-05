@@ -24,6 +24,7 @@ type Tab = (typeof ALL_TABS)[number]
 
 interface Summary {
   orders: number
+  pendingOrders: number
   revenue: number
   clicks: number
   pendingCommissions: number
@@ -123,7 +124,10 @@ function Dashboard({ k, goTo }: { k: string; goTo: (t: Tab) => void }) {
   return (
     <>
       <div className="stat-grid">
-        <div className="stat"><div className="v">{s.orders}</div><div className="l">Orders</div></div>
+        <div className="stat">
+          <div className="v">{s.orders}</div>
+          <div className="l">Paid orders{s.pendingOrders ? ` · ${s.pendingOrders} pending` : ''}</div>
+        </div>
         <div className="stat"><div className="v">{rm(s.revenue)}</div><div className="l">Revenue</div></div>
         <div className="stat"><div className="v">{s.clicks}</div><div className="l">Affiliate clicks</div></div>
         <div className="stat"><div className="v">{rm(s.pendingCommissions)}</div><div className="l">Commissions pending</div></div>
